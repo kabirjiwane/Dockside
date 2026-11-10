@@ -1,1 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ask Dockside</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f0f4f8; display: flex; justify-content: center; min-height: 100vh; padding: 16px; }
+    .chat-container { width: 100%; max-width: 600px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 90vh; }
+    .header { background: #005580; color: white; padding: 16px; border-radius: 12px 12px 0 0; }
+    .header h1 { font-size: 1.25rem; }
+    .header p { font-size: 0.85rem; opacity: 0.85; }
+    .chat-box { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .message { max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 0.95rem; line-height: 1.4; }
+    .user-msg { background: #005580; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+    .bot-msg { background: #e9ecef; color: #212529; align-self: flex-start; border-bottom-left-radius: 2px; }
+    .timestamp { font-size: 0.75rem; color: #6c757d; margin-top: 4px; display: block; }
+    .input-area { padding: 12px; border-top: 1px solid #dee2e6; display: flex; gap: 8px; }
+    input[type="text"] { flex: 1; padding: 10px 14px; border: 1px solid #ced4da; border-radius: 6px; font-size: 1rem; outline: none; }
+    button { background: #005580; color: white; border: none; padding: 10px 18px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    button:disabled { background: #6c757d; cursor: not-allowed; }
+  </style>
+</head>
+<body>
 
+<div class="chat-container">
+  <div class="header">
+    <h1>Ask Dockside</h1>
+    <p>Dockside Paddle Co. · Grand Canal Dock</p>
+  </div>
+  
+  <div class="chat-box" id="chatBox">
+    <div class="message bot-msg">
+      Hello! Ask me about session prices, availability, or whether your activity will run in today's wind conditions.
+    </div>
+  </div>
+
+  <div class="input-area">
+    <input type="text" id="userInput" placeholder="Ask a question..." onkeydown="if(event.key==='Enter') sendMessage()">
+    <button id="sendBtn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script>
+  const SESSIONS_URL = "https://bdaib-hub.pages.dev/data/dockside/sessions.csv";
+  const WEATHER_URL = "https://api.open-meteo.com/v1/forecast?latitude=53.3441&longitude=-6.2386&current=temperature_2m,wind_speed_10m,wind_gusts_10m,precipitation&timezone=Europe%2FDublin";
+  const BRAIN_URL = "https://luas-class.kluxy.app/chat";
+
+  const SYSTEM_PROMPT = `You are Ask Dockside, an official customer service chatbot for Dockside Paddle Co. at Grand Canal Dock, Dublin.
+Answer customer queries strictly using the provided live session CSV data and live weather JSON. Never guess or answer from external memory.
+
+Rules to enforce:
+1. Wind Safety Rule: A session can ONLY run if the current wind speed (current.wind_speed_10m) is AT OR BELOW the session's max_wind_kmh. If current wind speed exceeds max_wind_kmh, state clearly that the session cannot go ahead due to wind safety, quoting both the current wind speed and the session's limit.
+2. Availability Rule: If slots_left is 0, inform the customer that the session is sold out.
+3. Unoffered Activities: If an activity or item (e.g. bike rental) is not present in the CSV data, state clearly that Dockside Paddle Co. does not offer it.
+4. Keep answers concise, friendly, and factual. Always quote relevant numbers (price in EUR, slots left, wind speeds).`;
+
+  async function sendMessage() {
+    const inputField = document.getElementById("userInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const question = inputField.value.trim();
+    if (!question) return;
+
+    appendMessage(question, "user-msg");
+    inputField.value = "";
+    inputField.disabled = true;
+    sendBtn.disabled = true;
+
+    const thinkingElem = appendMessage("Thinking...", "bot-msg");
+
+    try {
+      const [sessionsRes, weatherRes] = await Promise.all([
+        fetch(SESSIONS_URL),
+        fetch(WEATHER_URL)
+      ]);
+
+      const csvData = await sessionsRes.text();
+      const weatherData = await weatherRes.json();
+      const timeStr = new Date().toLocaleTimeString();
+
+      const messageContent = `Today's sessions (CSV):\n${csvData}\n\nCurrent weather at the dock (JSON):\n${JSON.stringify(weatherData)}\n\nCustomer question: ${question}`;
+
+      const brainRes = await fetch(BRAIN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: messageContent }]
+        })
+      });
+
+      const result = await brainRes.json();
+      
+      if (result.reply) {
+        thinkingElem.innerHTML = `${result.reply}<span class="timestamp">Data fetched live at ${timeStr}</span>`;
+      } else {
+        thinkingElem.innerText = "Error: Received empty response from brain.";
+      }
+    } catch (err) {
+      thinkingElem.innerText = `Error loading data: ${err.message}`;
+    } finally {
+      inputField.disabled = false;
+      sendBtn.disabled = false;
+      inputField.focus();
+    }
+  }
+
+  function appendMessage(text, className) {
+    const chatBox = document.getElementById("chatBox");
+    const msgElem = document.createElement("div");
+    msgElem.className = `message ${className}`;
+    msgElem.innerText = text;
+    chatBox.appendChild(msgElem);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return msgElem;
+  }
+</script>
+
+</body>
+</html>
